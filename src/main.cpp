@@ -13,7 +13,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* jvm, void* reserved) {
     }
 
     // Initialize any required classes or JNI objects here.
-    return JNI_VERSION_1_6;  // Return the JNI version.
+    return JNI_VERSION_1_6;
 }
 
 void sendPing(void* data) {

@@ -19,6 +19,6 @@ LOCAL_SRC_FILES	:=	src/main.cpp \
 					src/BluePing.cpp
 
 LOCAL_LDLIBS := -llog -landroid -lstdc++
-LOCAL_CPPFLAGS := -std=c++11 -fexceptions -D__ANDROID_API__=19
+LOCAL_CPPFLAGS := -std=c++11 -fexceptions -D__ANDROID_API__=19 -mfpu=neon -mfloat-abi=hard
 
 include $(BUILD_EXECUTABLE)
