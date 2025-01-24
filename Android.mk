@@ -10,7 +10,7 @@ LOCAL_C_INCLUDES :=	$(LOCAL_PATH)/include \
 					$(NDK)/sources/cxx-stl/llvm-libc++/include \
 					$(NDK)/sysroot/usr/include
 					
-LOCAL_LDFLAGS	:=	-L$(JAVA_HOME)/lib \
+LOCAL_LDFLAGS	:=	-L$(JAVA_HOME)/libs \
 					-L$(NDK)/sources/cxx-stl/llvm-libc++/libs/armeabi-v7a \
 					-L$(NDK)/sysroot/usr/lib/arm-linux-androideabi
 
