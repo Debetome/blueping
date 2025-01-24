@@ -3,6 +3,19 @@
 #include "ThreadPool.h"
 #include "BluePing.h"
 
+// JNI_OnLoad function: This is automatically called when the native library is loaded.
+JNIEXPORT jint JNI_OnLoad(JavaVM* jvm, void* reserved) {
+    JNIEnv* env = nullptr;
+
+    if (jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        std::cerr << "Failed to get the environment using GetEnv()" << std::endl;
+        return JNI_ERR;
+    }
+
+    // Initialize any required classes or JNI objects here.
+    return JNI_VERSION_1_6;  // Return the JNI version.
+}
+
 void sendPing(void* data) {
     BluePing* bluePing = static_cast<BluePing*>(data);
     uint8_t dataToSend[600] = {0x01}; // Fixed 600-byte payload
@@ -43,21 +56,12 @@ int main(int argc, char* argv[]) {
     const char* deviceAddress = argv[1];
     int threadCount = std::stoi(argv[2]);
 
-    // Initialize the Java VM
-    JavaVMOption options[1];
-    options[0].optionString = "-Djava.class.path=./lib/com/android/blueping";
-
-    JavaVMInitArgs vmArgs;
-    vmArgs.version = JNI_VERSION_1_6;
-    vmArgs.nOptions = 1;
-    vmArgs.options = options;
-    vmArgs.ignoreUnrecognized = JNI_FALSE;
-
+    // Retrieve the existing JVM (Android will manage this for us)
     JavaVM* jvm;
     JNIEnv* env;
 
-    if (JNI_CreateJavaVM(&jvm, &env, &vmArgs) != JNI_OK) {
-        std::cerr << "Failed to create Java VM" << std::endl;
+    if (jvm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) != JNI_OK) {
+        std::cerr << "Failed to attach current thread to JVM." << std::endl;
         return 1;
     }
 
@@ -65,7 +69,6 @@ int main(int argc, char* argv[]) {
     jclass blueManagerClass = env->FindClass("com/android/blueping/BlueManager");
     if (!blueManagerClass) {
         std::cerr << "Could not find BlueManager class." << std::endl;
-        jvm->DestroyJavaVM();
         return 1;
     }
 
@@ -73,38 +76,39 @@ int main(int argc, char* argv[]) {
     jmethodID constructor = env->GetMethodID(blueManagerClass, "<init>", "()V");
     if (!constructor) {
         std::cerr << "Could not find BlueManager constructor." << std::endl;
-        jvm->DestroyJavaVM();
         return 1;
     }
 
     jobject blueManagerObj = env->NewObject(blueManagerClass, constructor);
     if (!blueManagerObj) {
         std::cerr << "Failed to create BlueManager instance." << std::endl;
-        jvm->DestroyJavaVM();
         return 1;
     }
 
-    // Create BluePing instance
-    BluePing bluePing(env, blueManagerObj);
-    if (!bluePing.connect(deviceAddress)) {
-        std::cerr << "Failed to connect to device: " << deviceAddress << std::endl;
-        jvm->DestroyJavaVM();
-        return 1;
+    // Use BluePing to interact with BlueManager
+    try {
+        BluePing bluePing(env, blueManagerObj);
+        if (!bluePing.connect(deviceAddress)) {
+            std::cerr << "Failed to connect to device: " << deviceAddress << std::endl;
+            return 1;
+        }
+
+        // Launch the ThreadPool for sending/receiving
+        ThreadPool pool(threadCount);
+        for (int i = 0; i < threadCount; i++) {
+            pool.addJob({sendPing, &bluePing});
+            pool.addJob({receiveResponse, &bluePing});
+        }
+
+        std::cout << "Press Enter to exit and disconnect ..." << std::endl;
+        std::cin.get();
+
+        bluePing.disconnect();
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
     }
 
-    // Launch the ThreadPool for sending/receiving
-    ThreadPool pool(threadCount);
-    for (int i = 0; i < 10; ++i) {
-        pool.addJob({sendPing, &bluePing});
-        pool.addJob({receiveResponse, &bluePing});
-    }
-
-    // Wait for user input to terminate
-    std::cout << "Press Enter to exit and disconnect ..." << std::endl;
-    std::cin.get();
-
-    // Cleanup
-    bluePing.disconnect();
-    jvm->DestroyJavaVM();
+    // Detach the thread from the JVM
+    jvm->DetachCurrentThread();
     return 0;
 }

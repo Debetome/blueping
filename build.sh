@@ -19,7 +19,7 @@ fi
 
 # Stage 1: Compile JNI java source code
 echo "[*] Compiling java code ..."
-javac -source 1.8 -target 1.8 -classpath $SDK_PATH/android.jar -d $LIBS_PATH $JAVA_SRC_PATH/com/android/blueping/BlueManager.java
+$JAVA_HOME/bin/javac -source 1.8 -target 1.8 -classpath $SDK_PATH/android.jar -d $LIBS_PATH $JAVA_SRC_PATH/com/android/blueping/BlueManager.java
 if [ $? -ne 0 ]; then
     echo "[-] Java compilation failed."
     exit 1
@@ -27,7 +27,7 @@ fi
 
 # Stage 2: Generate JNI header
 echo "[*] Generating JNI header ..."
-javah -d $INCLUDE_PATH -classpath $LIBS_PATH com.android.blueping.BlueManager
+$JAVA_HOME/bin/javah -d $INCLUDE_PATH -classpath $LIBS_PATH com.android.blueping.BlueManager
 if [ $? -ne 0 ]; then
     echo "[-] JNI header generation failed."
     exit 1
@@ -36,10 +36,10 @@ fi
 # Step 3: Build native code using ndk-build
 echo "[*] Building native code..."
 
-ndk-build clean NDK_PROJECT_PATH=$PROJECT_PATH \
+$NDK_PATH/build/ndk-build clean NDK_PROJECT_PATH=$PROJECT_PATH \
     APP_BUILD_SCRIPT=$PROJECT_PATH/Android.mk \
     NDK_APPLICATION_MK=$PROJECT_PATH/Application.mk
-ndk-build NDK_PROJECT_PATH=$PROJECT_PATH \
+$NDK_PATH/build/ndk-build NDK_PROJECT_PATH=$PROJECT_PATH \
     APP_BUILD_SCRIPT=$PROJECT_PATH/Android.mk \
     NDK_APPLICATION_MK=$PROJECT_PATH/Application.mk
 
