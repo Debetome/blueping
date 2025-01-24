@@ -36,17 +36,9 @@ fi
 # Step 3: Build native code using ndk-build
 echo "[*] Building native code ..."
 
-if  [ " $* " == *" --clean "* ]; then
-    $NDK_PATH/build/ndk-build clean NDK_PROJECT_PATH=$PROJECT_PATH \
-        APP_BUILD_SCRIPT=$PROJECT_PATH/Android.mk \
-        NDK_APPLICATION_MK=$PROJECT_PATH/Application.mk
-
-    if [ $? -ne 0 ]; then
-        echo "[-] Failed to clean project."
-        exit 1
-    fi
-fi
-
+$NDK_PATH/build/ndk-build clean NDK_PROJECT_PATH=$PROJECT_PATH \
+    APP_BUILD_SCRIPT=$PROJECT_PATH/Android.mk \
+    NDK_APPLICATION_MK=$PROJECT_PATH/Application.mk
 $NDK_PATH/build/ndk-build NDK_PROJECT_PATH=$PROJECT_PATH \
     APP_BUILD_SCRIPT=$PROJECT_PATH/Android.mk \
     NDK_APPLICATION_MK=$PROJECT_PATH/Application.mk
@@ -56,11 +48,16 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-if [ " $* " == *" --push "* ]; then
+echo "[+] Build complete!"
+
+if [[ " $* " == *" push "* ]]; then
+    echo "[*] Pushing project into the phone ..."
+
     adb push $PROJECT_PATH /data/local/tmp
     if [ $? -ne 0 ]; then
-        echo "[-] Failed to push project into the device."
+        echo "[-] Failed to push project into the phone."
+        exit 1
     fi
-fi
 
-echo "[+] Build complete!"
+    echo "[+] Project pushed!"
+fi
