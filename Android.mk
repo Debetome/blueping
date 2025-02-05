@@ -9,6 +9,6 @@ LOCAL_C_INCLUDES := $(LOCAL_PATH)/include
 
 LOCAL_CFLAGS := -std=c11 -Wall -Wextra -Werror -Wunused-parameter -Wno-unused-parameter
 
-LOCAL_LDLIBS := -llog  # Link to Android logging library
+LOCAL_LDLIBS := -llog -static-libgcc  # Static linking of runtime libraries
 
 include $(BUILD_EXECUTABLE)

@@ -19,7 +19,7 @@ echo "[+] Build complete!"
 if [[ " $* " == *" push "* ]]; then
     echo "[*] Pushing project into the phone ..."
 
-    adb push $PROJECT_PATH /data/local/tmp
+    adb push $PROJECT_PATH/obj/local/armeabi-v7a/blueping /data/local/tmp
     if [ $? -ne 0 ]; then
         echo "[-] Failed to push project into the phone."
         exit 1
