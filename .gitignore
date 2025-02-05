@@ -1,3 +1,6 @@
 include/
 libs/
 obj/
+sdk/
+jdk/
+ndk/
