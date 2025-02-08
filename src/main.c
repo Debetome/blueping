@@ -163,8 +163,7 @@ int establish_connection(int fd) {
         while ((time(NULL) - start) < 5) {  // 5-second timeout
             int len = read_hci_event(fd, buf, sizeof(buf), 3000);
             if (len < 0) continue;
-
-            printf("Length is bigger than 0");
+            
             if (buf[1] == HCI_EVENT_CONN_COMPLETE) {
                 handle = buf[3] | (buf[4] << 8);
                 printf("Connection established! Handle: 0x%04X\n", handle);
@@ -173,7 +172,7 @@ int establish_connection(int fd) {
         }
 
         printf("Connection timeout. Retrying...\n");
-        usleep(2000000);
+        usleep(1000000);
     }
 }
 
